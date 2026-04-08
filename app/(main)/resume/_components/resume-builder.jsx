@@ -1,0 +1,338 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Download, Loader2, Save } from "lucide-react";
+import { toast } from "sonner";
+import MDEditor from "@uiw/react-md-editor";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { saveResume } from "@/actions/resume";
+import { EntryForm } from "./entry-form";
+import { useUser } from "@clerk/nextjs";
+import { entriesToMarkdown } from "@/app/lib/helper";
+import { resumeSchema } from "@/app/lib/schema";
+import html2pdf from "html2pdf.js/dist/html2pdf.min.js";
+
+export default function ResumeBuilder({ initialContent }) {
+  const [activeTab, setActiveTab] = useState("edit");
+  const [previewContent, setPreviewContent] = useState(initialContent);
+  const { user } = useUser();
+  const [resumeMode, setResumeMode] = useState("preview");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm({
+    resolver: zodResolver(resumeSchema),
+    defaultValues: {
+      contactInfo: {},
+      summary: "",
+      skills: "",
+      experience: [],
+      education: [],
+      projects: [],
+    },
+  });
+
+  const formValues = watch();
+
+  useEffect(() => {
+    if (initialContent) setActiveTab("preview");
+  }, [initialContent]);
+
+  useEffect(() => {
+    if (activeTab === "edit") {
+      const newContent = getCombinedContent();
+      setPreviewContent(newContent ? newContent : initialContent);
+    }
+  }, [formValues, activeTab]);
+
+  const getContactMarkdown = () => {
+    const { contactInfo } = formValues;
+    const parts = [];
+    if (contactInfo.email) parts.push(`📧 ${contactInfo.email}`);
+    if (contactInfo.mobile) parts.push(`📱 ${contactInfo.mobile}`);
+    if (contactInfo.linkedin)
+      parts.push(`💼 [LinkedIn](${contactInfo.linkedin})`);
+    if (contactInfo.twitter)
+      parts.push(`🐦 [Twitter](${contactInfo.twitter})`);
+
+    return parts.length > 0
+      ? `## <div align="center">${user?.fullName}</div>\n\n<div align="center">\n\n${parts.join(" | ")}\n\n</div>`
+      : "";
+  };
+
+  const getCombinedContent = () => {
+    const { summary, skills, experience, education, projects } = formValues;
+    return [
+      getContactMarkdown(),
+      summary && `## Professional Summary\n\n${summary}`,
+      skills && `## Skills\n\n${skills}`,
+      entriesToMarkdown(experience, "Work Experience"),
+      entriesToMarkdown(education, "Education"),
+      entriesToMarkdown(projects, "Projects"),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  };
+
+  const sectionStyle = {
+    borderBottom: "2px solid black",
+    marginTop: "20px",
+    marginBottom: "10px",
+    paddingBottom: "4px",
+    fontSize: "16px",
+    letterSpacing: "1px",
+  };
+
+  const generatePDF = async () => {
+    setIsGenerating(true);
+    try {
+      const element = document.getElementById("resume-pdf");
+      const opt = {
+        margin: [15, 15],
+        filename: "resume.pdf",
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      };
+      await html2pdf().set(opt).from(element).save();
+    } catch (error) {
+      console.error("PDF generation error:", error);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const onSubmit = async () => {
+    setIsSaving(true);
+    try {
+      await saveResume(previewContent);
+      toast.success("Resume saved successfully!");
+    } catch (error) {
+      console.error("Save error:", error);
+      toast.error("Failed to save resume");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div data-color-mode="light" className="space-y-4">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-2">
+        <h1 className="font-bold gradient-title text-5xl md:text-6xl">
+          Resume Builder
+        </h1>
+        <div className="space-x-2">
+          <Button
+            variant="destructive"
+            onClick={handleSubmit(onSubmit)}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Save
+              </>
+            )}
+          </Button>
+          <Button onClick={generatePDF} disabled={isGenerating}>
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Generating PDF...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4" />
+                Download PDF
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="edit">Form</TabsTrigger>
+          <TabsTrigger value="preview">Markdown</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="edit">
+          <form className="space-y-8">
+            {/* Contact Info */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Contact Information</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Email</label>
+                  <Input
+                    placeholder="your@email.com"
+                    {...register("contactInfo.email")}
+                  />
+                  {errors.contactInfo?.email && (
+                    <p className="text-sm text-red-500">
+                      {errors.contactInfo.email.message}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Mobile</label>
+                  <Input
+                    placeholder="+1 234 567 8900"
+                    {...register("contactInfo.mobile")}
+                  />
+                  {errors.contactInfo?.mobile && (
+                    <p className="text-sm text-red-500">
+                      {errors.contactInfo.mobile.message}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">LinkedIn URL</label>
+                  <Input
+                    placeholder="https://linkedin.com/in/yourprofile"
+                    {...register("contactInfo.linkedin")}
+                  />
+                  {errors.contactInfo?.linkedin && (
+                    <p className="text-sm text-red-500">
+                      {errors.contactInfo.linkedin.message}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Twitter/X URL</label>
+                  <Input
+                    placeholder="https://twitter.com/yourhandle"
+                    {...register("contactInfo.twitter")}
+                  />
+                  {errors.contactInfo?.twitter && (
+                    <p className="text-sm text-red-500">
+                      {errors.contactInfo.twitter.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Summary */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Professional Summary</h3>
+              <Textarea
+                placeholder="Write a compelling professional summary..."
+                className="h-32"
+                {...register("summary")}
+              />
+              {errors.summary && (
+                <p className="text-sm text-red-500">{errors.summary.message}</p>
+              )}
+            </div>
+
+            {/* Skills */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Skills</h3>
+              <Textarea
+                placeholder="e.g. React, Node.js, Python, SQL..."
+                className="h-24"
+                {...register("skills")}
+              />
+              {errors.skills && (
+                <p className="text-sm text-red-500">{errors.skills.message}</p>
+              )}
+            </div>
+
+            {/* Experience */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Work Experience</h3>
+              <Controller
+                name="experience"
+                control={control}
+                render={({ field }) => (
+                  <EntryForm
+                    type="Experience"
+                    entries={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            </div>
+
+            {/* Education */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Education</h3>
+              <Controller
+                name="education"
+                control={control}
+                render={({ field }) => (
+                  <EntryForm
+                    type="Education"
+                    entries={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            </div>
+
+            {/* Projects */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Projects</h3>
+              <Controller
+                name="projects"
+                control={control}
+                render={({ field }) => (
+                  <EntryForm
+                    type="Project"
+                    entries={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            </div>
+          </form>
+        </TabsContent>
+
+        <TabsContent value="preview">
+          <div className="border rounded-lg">
+            <MDEditor
+              value={previewContent}
+              onChange={setPreviewContent}
+              height={800}
+              preview={resumeMode}
+            />
+          </div>
+
+          {/* Hidden PDF element */}
+          <div style={{ position: "absolute", left: "-9999px", top: 0 }}>
+            <div id="resume-pdf" style={{ padding: "40px", width: "800px" }}>
+              <h1 style={{ textAlign: "center" }}>{user?.fullName}</h1>
+              <p style={{ textAlign: "center" }}>
+                {formValues.contactInfo?.email} |{" "}
+                {formValues.contactInfo?.mobile}
+              </p>
+              {formValues.summary && (
+                <>
+                  <h2 style={sectionStyle}>SUMMARY</h2>
+                  <p>{formValues.summary}</p>
+                </>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
